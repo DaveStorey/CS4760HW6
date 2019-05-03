@@ -10,9 +10,6 @@
 #include<signal.h>
 #include<time.h>
 
-#define resSize 20
-#define available 8
-
 static volatile int keepRunning = 1;
 
 void intHandler(int dummy){
@@ -28,17 +25,14 @@ struct clock{
 struct mesg_buffer{
 	long mesg_type;
 	unsigned long processNum;
-	int page
-	int rdWr;
+	int request;
+	int write;
 } message;
 
 int main(int argc, char * argv[]){
 	int pageTable[32];
 	srand(getpid()*time(0));
-	int msgid, msgid1, msgid2, resourcesHeld[resSize];
-	for(int k = 0; k < resSize; k++){
-		resourcesHeld[k] = 0;
-	}
+	int msgid, msgid1, msgid2;
 	unsigned int terminates, checkSpanSec = 0;
 	char* ptr;
 	pid_t pid = getpid();
@@ -60,10 +54,15 @@ int main(int argc, char * argv[]){
 	message.mesg_type = 1;
 	while (terminates > 20 && keepRunning == 1){
 		message.processNum = logicalNum;
-		message.page = rand() % 31;
-		message.offset = rand() % 1023;
+		message.request = rand() % 32768;
+		if (message.request % 100 <20){
+			message.write = 1;
+		}
+		else{
+			message.write = 0;
+		}
 		msgsnd(msgid, &message, sizeof(message), 0);
-		msgrcv(msgid1, &message, sizeof(message, logicalNum, 0);
+		msgrcv(msgid1, &message, sizeof(message), logicalNum, 0);
 	}
 	printf("Child %li dying.\n", logicalNum);
 	msgsnd(msgid2, & message, sizeof(message), 0);
