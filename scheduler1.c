@@ -100,9 +100,11 @@ void scheduler(char* outfile, int total, int verbFlag){
 	//While loop keeps running until all children are spawned, ctrl-c, or time is reached.
 	while((i < total) && (keepRunning == 1) && (timeFlag == 0) && fileFlag == 0){
 		time(&when2);
+		//Check on time the 
 		if (when2 - when > 5){
 			timeFlag = 1;
 		}
+		//Check on log file size
 		if (ftell(outPut) > 10000000){
 			fileFlag = 1;
 		}
@@ -172,13 +174,14 @@ void scheduler(char* outfile, int total, int verbFlag){
 				}
 				message.mesg_type = message.processNum;
 				msgsnd(msgid1, &message, sizeof(message), 0);
-				//staleProc = pageTables[message.processNum-1][pageReq];
+				staleProc = pageTables[message.processNum-1][pageReq];
 			}
 			if (pageCalls % 90 == 0){
 				for(int j = 0; j < 256; j++){
 					frameTable[j].reference = frameTable[j].reference / 2;
 				}
 			}
+			//Setting reference and dirty variables
 			if (frameTable[staleProc].reference < 128){
 				frameTable[staleProc].reference += 128;
 			}
@@ -188,18 +191,23 @@ void scheduler(char* outfile, int total, int verbFlag){
 			else{
 				frameTable[staleProc].dirty = 0;
 			}
+			//Printing frame table every 150 cycles
 			if (pageCalls % 150 == 0){
 				fprintf(outPut, "Frame table at %d:%li:\n", shmPTR[0].sec, shmPTR[0].nano);
 				for (int k = 0; k < 256; k++){
-					fprintf(outPut, "\tFrame %d: Process %d, page %d, reference, %d, dirty: %d\n", k, frameTable[k].process, frameTable[k].page, frameTable[k].reference, frameTable[k].dirty);
+					fprintf(outPut, "\tFrame %d: Process %d, page %d, reference %d, dirty: %d\n", k, frameTable[k].process, frameTable[k].page, frameTable[k].reference, frameTable[k].dirty);
 				}
 			}
 		}
+		//Keeping track of dying children
 		if (msgrcv(msgid2, &message, sizeof(message), 0, IPC_NOWAIT) !=-1){
 			alive--;
 			pid[message.processNum-1] = -1;
 		}
 	}
+	/*While loop is copy of message checks above, but runs after all
+	children have been spawned, until they have all terminated, the time
+	flag has been tripped, ctrl-c is pressed, or the file fills up.*/
 	while((alive > 0) && (keepRunning == 1) && (timeFlag == 0) && fileFlag == 0){
 		time(&when2);
 		if (when2 - when > 5){
@@ -267,7 +275,7 @@ void scheduler(char* outfile, int total, int verbFlag){
 			if (pageCalls % 150 == 0){
 				fprintf(outPut, "Frame table at %d:%li:\n", shmPTR[0].sec, shmPTR[0].nano);
 				for (int k = 0; k < 256; k++){
-					fprintf(outPut, "\tFrame %d: Process %d, page %d, reference, %d, dirty: %d\n", k, frameTable[k].process, frameTable[k].page, frameTable[k].reference, frameTable[k].dirty);
+					fprintf(outPut, "\tFrame %d: Process %d, page %d, reference %d, dirty: %d\n", k, frameTable[k].process, frameTable[k].page, frameTable[k].reference, frameTable[k].dirty);
 				}
 			}
 		}
@@ -302,6 +310,5 @@ void scheduler(char* outfile, int total, int verbFlag){
 	msgctl(msgid1, IPC_RMID, NULL);
 	msgctl(msgid2, IPC_RMID, NULL);
 	wait(NULL);
-	usleep(100000);
 	fclose(outPut);
 }
