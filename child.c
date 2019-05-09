@@ -30,10 +30,9 @@ struct mesg_buffer{
 } message;
 
 int main(int argc, char * argv[]){
-	int pageTable[32];
 	srand(getpid()*time(0));
-	int msgid, msgid1, msgid2;
-	unsigned int terminates, checkSpanSec = 0;
+	int msgid, msgid1, msgid2, i = 0;
+	unsigned int terminates;
 	char* ptr;
 	pid_t pid = getpid();
 	struct clock * shmPTR;
@@ -49,12 +48,12 @@ int main(int argc, char * argv[]){
 	msgid = msgget(msgKey, 0777 | IPC_CREAT);
 	msgid1 = msgget(msgKey1, 0777 | IPC_CREAT);
 	msgid2 = msgget(msgKey2, 0777 | IPC_CREAT);
-	checkSpanNano = rand() % 250000;
 	terminates = rand() % 100;
 	message.mesg_type = 1;
 	while (terminates > 20 && keepRunning == 1){
+		i++;
 		message.processNum = logicalNum;
-		message.request = rand() % 32768;
+		message.request = rand() % 32767;
 		if (message.request % 100 <20){
 			message.write = 1;
 		}
@@ -63,8 +62,12 @@ int main(int argc, char * argv[]){
 		}
 		msgsnd(msgid, &message, sizeof(message), 0);
 		msgrcv(msgid1, &message, sizeof(message), logicalNum, 0);
+		//If statement ensures sufficient page requests
+		if (i % 15 == 0)
+			terminates = rand() % 100;
 	}
 	printf("Child %li dying.\n", logicalNum);
+	message.processNum = logicalNum;
 	msgsnd(msgid2, & message, sizeof(message), 0);
 	shmdt(shmPTR);
 }

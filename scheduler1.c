@@ -23,7 +23,7 @@ struct clock{
 };
 
 struct frame{
-	char reference[8];
+	unsigned int reference;
 	char dirty;
 	int page;
 	unsigned int process;
@@ -37,8 +37,7 @@ struct mesg_buffer{
 }message;
 
 void scheduler(char* outfile, int total, int verbFlag){
-	unsigned int quantum = 500000;
-	int alive = 0, totalSpawn = 0, msgid, msgid1, msgid2, shmID, timeFlag = 0, i = 0, totalFlag = 0, pid[total], status, grantFlag = 0, deadlockFlag = 0, processStuck = 0, lastCheck = 0, fileFlag = 0, tableIter = 0, swapFlag = 0, pageReq, lru, staleProc;
+	int alive = 0, totalSpawn = 0, msgid, msgid1, msgid2, shmID, timeFlag = 0, i = 0, totalFlag = 0, pid[total], fileFlag = 0, swapFlag = 0, pageReq, lru, staleProc, pageCalls = 0;
 	int pageTables[18][32];
 	unsigned long increment, timeBetween;
 	char * parameter[32], parameter1[32], parameter2[32], parameter3[32], parameter4[32], parameter5[32];
@@ -50,9 +49,7 @@ void scheduler(char* outfile, int total, int verbFlag){
 		frameTable[k].process = 0;
 		frameTable[k].dirty = 0;
 		frameTable[k].page = 0;
-		for(int j = 0; j < 8; j++){
-			frameTable[k].reference[j] = 0;
-		}
+		frameTable[k].reference = 0;
 	}
 	for(int k = 0; k < 18; k++){
 		for(int j = 0; j < 32; j++){
@@ -102,9 +99,8 @@ void scheduler(char* outfile, int total, int verbFlag){
 	increment = (rand() % 5000000) + 25000000;
 	//While loop keeps running until all children are spawned, ctrl-c, or time is reached.
 	while((i < total) && (keepRunning == 1) && (timeFlag == 0) && fileFlag == 0){
-		usleep(100000);
 		time(&when2);
-		if (when2 - when > 7){
+		if (when2 - when > 5){
 			timeFlag = 1;
 		}
 		if (ftell(outPut) > 10000000){
@@ -143,40 +139,48 @@ void scheduler(char* outfile, int total, int verbFlag){
 		}
 		//Checking for message from exiting child
 		if (msgrcv(msgid, &message, sizeof(message), 0, IPC_NOWAIT) !=-1){
+			pageCalls++;
 			pageReq = message.request / 1024;
 			if (pageTables[message.processNum-1][pageReq] == -1){
-				printf("Process %li page %d miss!  ", message.processNum, pageReq);
+				if (verbFlag){
+					fprintf(outPut, "%d:%li : Process %li page %d miss!  ", shmPTR[0].sec, shmPTR[0].nano, message.processNum-1, pageReq);
+				}
+				lru = 1000;
+				staleProc = 0;
 				for(int j = 0; j < 256; j++){
-					for(int k = 0; k < 8; k++){
-						if (frameTable[j].reference[k] == 1){
-							if (k > lru){
-								lru = k;
-								staleProc = j;
-								break;
-							}
-						}
-						if (k == 7){
-							lru = k;
-							staleProc = j;
-						}	
+					if (frameTable[j].reference < lru){
+						lru = frameTable[j].reference;
+						staleProc = j;
 					}
 				}
 				pageTables[frameTable[staleProc].process][frameTable[staleProc].page] = -1;
-				frameTable[staleProc].process = message.processNum;
+				frameTable[staleProc].process = message.processNum-1;
 				frameTable[staleProc].page = pageReq;
+				frameTable[staleProc].reference = 0;
 				pageTables[message.processNum-1][pageReq] = staleProc;
-				printf("Swapped in at frame %d\n", staleProc);
+				//Adding additional time for page swap.
+				shmPTR[0].nano += increment / 1000;
+				if (verbFlag){
+					fprintf(outPut, "Swapped in at frame %d\n", staleProc);
+				}
 				message.mesg_type = message.processNum;
 				msgsnd(msgid1, &message, sizeof(message), 0);
 			}
 			else{
-				printf("Process %li page %d found at %d\n", message.processNum, pageReq, pageTables[message.processNum-1][pageReq]);
+				if (verbFlag){
+					fprintf(outPut, "%d:%li : Process %li page %d found at %d\n", shmPTR[0].sec, shmPTR[0].nano, message.processNum-1, pageReq, pageTables[message.processNum-1][pageReq]);
+				}
 				message.mesg_type = message.processNum;
 				msgsnd(msgid1, &message, sizeof(message), 0);
+				//staleProc = pageTables[message.processNum-1][pageReq];
 			}
-			frameTable[staleProc].reference[0] = 1;
-			for(int j = 1; j < 8; j++){
-				frameTable[staleProc].reference[j] = 0;
+			if (pageCalls % 90 == 0){
+				for(int j = 0; j < 256; j++){
+					frameTable[j].reference = frameTable[j].reference / 2;
+				}
+			}
+			if (frameTable[staleProc].reference < 128){
+				frameTable[staleProc].reference += 128;
 			}
 			if (message.write){
 				frameTable[staleProc].dirty = 1;
@@ -184,15 +188,21 @@ void scheduler(char* outfile, int total, int verbFlag){
 			else{
 				frameTable[staleProc].dirty = 0;
 			}
+			if (pageCalls % 150 == 0){
+				fprintf(outPut, "Frame table at %d:%li:\n", shmPTR[0].sec, shmPTR[0].nano);
+				for (int k = 0; k < 256; k++){
+					fprintf(outPut, "\tFrame %d: Process %d, page %d, reference, %d, dirty: %d\n", k, frameTable[k].process, frameTable[k].page, frameTable[k].reference, frameTable[k].dirty);
+				}
+			}
 		}
 		if (msgrcv(msgid2, &message, sizeof(message), 0, IPC_NOWAIT) !=-1){
 			alive--;
+			pid[message.processNum-1] = -1;
 		}
 	}
 	while((alive > 0) && (keepRunning == 1) && (timeFlag == 0) && fileFlag == 0){
-		usleep(100000);
 		time(&when2);
-		if (when2 - when > 7){
+		if (when2 - when > 5){
 			timeFlag = 1;
 		}
 		if (ftell(outPut) > 10000000){
@@ -205,42 +215,48 @@ void scheduler(char* outfile, int total, int verbFlag){
 			shmPTR[0].nano -= 1000000000;
 		}
 		if (msgrcv(msgid, &message, sizeof(message), 0, IPC_NOWAIT) !=-1){
+			pageCalls++;
 			pageReq = message.request / 1024;
 			if (pageTables[message.processNum-1][pageReq] == -1){
-				printf("Process %li page %d miss!  ", message.processNum, pageReq);
-				lru = -1;
-				staleProc = -1;
+				if (verbFlag){
+					fprintf(outPut, "%d:%li : Process %li page %d miss!  ", shmPTR[0].sec, shmPTR[0].nano, message.processNum-1, pageReq);
+				}
+				lru = 1000;
+				staleProc = 0;
 				for(int j = 0; j < 256; j++){
-					for(int k = 0; k < 8; k++){
-						if (frameTable[j].reference[k] == 1){
-							if (k > lru){
-								lru = k;
-								staleProc = j;
-								break;
-							}
-						}
-						if (k == 7){
-							lru = k;
-							staleProc = j;
-						}
+					if (frameTable[j].reference < lru){
+						lru = frameTable[j].reference;
+						staleProc = j;
 					}
 				}
+				if (verbFlag){
+					fprintf(outPut, "Swapped in at frame %d\n", staleProc);
+				}
+				//Adding additional time for page swap.
+				shmPTR[0].nano += increment / 1000;
 				pageTables[frameTable[staleProc].process][frameTable[staleProc].page] = -1;
-				frameTable[staleProc].process = message.processNum;
+				frameTable[staleProc].process = message.processNum-1;
 				frameTable[staleProc].page = pageReq;
+				frameTable[staleProc].reference = 0;
 				pageTables[message.processNum-1][pageReq] = staleProc;
-				printf("Swapped in at frame %d\n", staleProc);
 				message.mesg_type = message.processNum;
 				msgsnd(msgid1, &message, sizeof(message), 0);
 			}
 			else{
-				printf("Process %li page %d found at %d\n", message.processNum, pageReq, pageTables[message.processNum-1][pageReq]);
+				if (verbFlag){
+					fprintf(outPut, "%d:%li : Process %li page %d found at %d\n", shmPTR[0].sec, shmPTR[0].nano, message.processNum-1, pageReq, pageTables[message.processNum-1][pageReq]);
+				}
 				message.mesg_type = message.processNum;
 				msgsnd(msgid1, &message, sizeof(message), 0);
+				staleProc = pageTables[message.processNum-1][pageReq];
 			}
-			frameTable[staleProc].reference[0] = 1;
-			for(int j = 1; j < 8; j++){
-				frameTable[staleProc].reference[j] = 0;
+			if (pageCalls % 90 == 0){
+				for(int j = 0; j < 256; j++){
+					frameTable[j].reference = frameTable[j].reference / 2;
+				}
+			}
+			if (frameTable[staleProc].reference < 128){
+				frameTable[staleProc].reference += 128;
 			}
 			if (message.write){
 				frameTable[staleProc].dirty = 1;
@@ -248,29 +264,32 @@ void scheduler(char* outfile, int total, int verbFlag){
 			else{
 				frameTable[staleProc].dirty = 0;
 			}
+			if (pageCalls % 150 == 0){
+				fprintf(outPut, "Frame table at %d:%li:\n", shmPTR[0].sec, shmPTR[0].nano);
+				for (int k = 0; k < 256; k++){
+					fprintf(outPut, "\tFrame %d: Process %d, page %d, reference, %d, dirty: %d\n", k, frameTable[k].process, frameTable[k].page, frameTable[k].reference, frameTable[k].dirty);
+				}
+			}
 		}
 		if (msgrcv(msgid2, &message, sizeof(message), 0, IPC_NOWAIT) !=-1){
 			alive--;
+			pid[message.processNum-1] = -1;
 		}
 	}
 	if(timeFlag == 1){
 		printf("Program has reached its allotted time, exiting.\n");
-		//fprintf(outPut, "Scheduler terminated at %li nanoseconds due to time limit.\n",  shmPTR[0].timeClock);
 	}
 	if(totalFlag == 1){
 		printf("Program has reached its allotted children, exiting.\n");
-		//fprintf(outPut, "Scheduler terminated at %li nanoseconds due to process limit.\n",  shmPTR[0].timeClock);
 	}
 	if(keepRunning == 0){
 		printf("Terminated due to ctrl-c signal.\n");
-		//fprintf(outPut, "Scheduler terminated at %li nanoseconds due to ctrl-c signal.\n",  shmPTR[0].timeClock);
 	}
 	if (fileFlag == 1){
 		printf("Terminated due to log file length.\n");
 	}
 	for (int i = 0; i < total; i++){
 		if (pid[i] > -1){
-			fprintf(outPut, "Killing process %d, %d\n", i+1, pid[i]);
 			if (kill(pid[i], SIGINT) == 0){
 				usleep(100000);
 				kill(pid[i], SIGKILL);
@@ -283,5 +302,6 @@ void scheduler(char* outfile, int total, int verbFlag){
 	msgctl(msgid1, IPC_RMID, NULL);
 	msgctl(msgid2, IPC_RMID, NULL);
 	wait(NULL);
+	usleep(100000);
 	fclose(outPut);
 }
