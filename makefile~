@@ -1,0 +1,22 @@
+all: OSS child
+
+OSS: OSS.o scheduler1.o help.o
+	gcc -std=c11 OSS.o scheduler1.o help.o -o OSS
+	
+OSS.o: OSS.c scheduler.h help.h
+	gcc -std=c11 -c OSS.c
+	
+scheduler1.o: scheduler1.c scheduler.h
+	gcc -std=c11 -c scheduler1.c
+
+help.o: help.c help.h
+	gcc -std=c11 -c help.c
+
+child: child.o
+	gcc -std=c11 child.c -o child
+	
+child.o: child.c
+	gcc -std=c11 child.c
+	
+clean:
+	rm *.o a.out
